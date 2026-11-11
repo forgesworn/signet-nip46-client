@@ -272,6 +272,10 @@ fn decrypt_reply(event: &Event, app_keys: &Keys) -> Option<Reply> {
     serde_json::from_str(&plaintext).ok()
 }
 
+/// The [`Error::Signer`] text for a `nostrconnect://` refusal that does not
+/// echo the secret: it may not come from the signer, so its own text is dropped.
+pub const UNPROVEN_REFUSAL: &str = "the pairing was refused";
+
 /// `Some(Ok(signer))` = accepted; `Some(Err(msg))` = refused; `None` = not
 /// ours / junk / wrong secret (never aborts the wait).
 pub(crate) fn accept_connect_event(
@@ -282,7 +286,16 @@ pub(crate) fn accept_connect_event(
     let reply = decrypt_reply(event, app_keys)?;
     match classify_connect_reply(reply.result.as_deref(), reply.error.as_deref(), secret) {
         ConnectVerdict::Accept => Some(Ok(event.pubkey)),
-        ConnectVerdict::Refused(e) => Some(Err(e)),
+        ConnectVerdict::Refused(e) => {
+            // Anyone who knows the client key can send a refusal. Pass on its
+            // text only when the reply also echoes the secret.
+            use subtle::ConstantTimeEq;
+            let proven = reply
+                .result
+                .as_deref()
+                .is_some_and(|r| bool::from(r.as_bytes().ct_eq(secret.as_bytes())));
+            Some(Err(if proven { e } else { UNPROVEN_REFUSAL.to_string() }))
+        }
         ConnectVerdict::Ignore => None,
     }
 }
@@ -722,6 +735,15 @@ mod tests {
         let err = reply_event(&signer, &app.public_key(), r#"{"id":"r","error":"denied"}"#);
         assert_eq!(
             accept_connect_event(&err, &app, secret),
+            Some(Err(UNPROVEN_REFUSAL.into()))
+        );
+        let proven = reply_event(
+            &signer,
+            &app.public_key(),
+            &format!(r#"{{"result":"{secret}","error":"denied"}}"#),
+        );
+        assert_eq!(
+            accept_connect_event(&proven, &app, secret),
             Some(Err("denied".into()))
         );
         let junk = reply_event(&signer, &app.public_key(), "not json");

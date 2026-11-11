@@ -106,9 +106,12 @@ anyone who knows that key can send an encrypted `{"result":"ack"}` from a key of
 their own. Only the signer that was shown the URI knows the secret, so only a
 reply that echoes it identifies the signer. A reply that decrypts but has the
 wrong secret, no secret, or is not a `connect` reply is ignored, and the wait
-goes on. A reply with a non-empty `error` ends the wait with `Error::Signer`
-and does not have to carry the secret, so anyone who knows the client key can
-cancel a pairing that way. They cannot complete one.
+goes on. A reply with a non-empty `error` ends the wait with `Error::Signer`. It does
+not have to carry the secret, so anyone who knows the client key (any listed
+relay, or whoever saw the URI) can cancel a pairing that way, though they
+cannot complete one. Unless the refusal also echoes the secret, its text is
+replaced by `UNPROVEN_REFUSAL`, so an outsider cannot put words in the
+signer's mouth.
 
 ## The persisted session
 
