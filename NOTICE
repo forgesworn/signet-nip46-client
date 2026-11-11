@@ -1,0 +1,74 @@
+signet-nip46-client
+===================
+
+This crate was moved from the `decented-signet` crate
+(forgesworn/signet-play, revision 55723d3a320150f90bac34fc2a7615fb69e11606,
+src/nip46.rs), together with its unit tests, by the same author. The code
+changed only where it had to stand alone: the relay types now come from the
+`fray-relay-client` crate, two items were made public (`generate_connect_secret`
+and `RemoteSigner::request_with_id`), the module's provenance paragraph was
+rewritten, the two widened items got new doc comments (`request_with_id`'s
+one-line comment was replaced), and the tests name "Example App" in place of a
+game. It is
+distributed under the MIT License; see LICENSE.
+
+Before that, the code was ported from the vendored NIP-46 client of an earlier
+game codebase by the same author, at source commit
+bdd4fe877acf3a6f4ca3174d1ce79c6672935e2f: the URI builder, the one-shot connect
+secret, the constant-time echo check, the secret-less persisted session and the
+tests were kept. The rust-nostr `NostrConnect` transport was replaced by a
+request loop on signet-play's relay trait (now the `Relay` trait of
+`fray-relay-client`), and `perms` was added to the `nostrconnect://` URI.
+
+That vendored client was a mirror of forgesworn/signet-nip46-client 0.1
+(canonical commit 5b85902f4655e541d4c631da5bc3257868dcc96a, plus the earlier
+codebase's nostrconnect-secret divergence). This crate replaces that one under
+the same name; it shares no history with it.
+
+The earlier game codebase is distributed under the MIT License:
+
+MIT License
+
+Copyright (c) 2026 decented
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+signet-nip46-client 0.1 is distributed under the MIT License:
+
+MIT License
+
+Copyright (c) 2026 ForgeSworn
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

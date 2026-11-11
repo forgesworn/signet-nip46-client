@@ -1,0 +1,19 @@
+[package]
+name = "signet-nip46-client"
+description = "A NIP-46 remote-signer client over a Nostr relay: pair by bunker:// or nostrconnect://, keep a session without secrets, and ask the signer for its public key or a signature. It works against an in-memory relay in tests."
+version = "0.2.0"
+# The code uses let-chains, which need edition 2024.
+edition = "2024"
+license = "MIT"
+authors = ["decented"]
+repository = "https://github.com/forgesworn/signet-nip46-client"
+
+[dependencies]
+fray-relay-client = { git = "https://github.com/forgesworn/fray-relay-client", rev = "7b2243046a01814ad4ad8797ce563425dbcd9011" }
+getrandom = "0.3"
+hex = "0.4"
+nostr = { version = "=0.44.8", features = ["nip44"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = "2"
+tokio = { version = "1", features = ["time", "macros"] }
