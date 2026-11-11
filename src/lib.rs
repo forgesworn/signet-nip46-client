@@ -352,6 +352,9 @@ impl PendingPair {
     /// subscription (EOSE, or failed to connect), or after [`LISTEN_GRACE`]:
     /// the moment it is safe to hand the URI to the signer. The reply is
     /// ephemeral, so one sent before anybody listens is lost.
+    ///
+    /// The returned signer uses `timeout` for its requests too; change it with
+    /// [`RemoteSigner::set_timeout`].
     pub async fn await_signer<F: FnOnce() + Send>(
         mut self,
         timeout: Duration,
@@ -455,6 +458,10 @@ impl RemoteSigner {
         }
     }
 
+    /// The session to store for [`RemoteSigner::restore`]. Sends nothing and
+    /// checks nothing: call it only after the pairing and
+    /// [`RemoteSigner::get_public_key`] have succeeded, with the persona that
+    /// call returned.
     pub fn persist(&self, persona: &PublicKey) -> PersistedSession {
         PersistedSession {
             app_secret_key: self.app_keys.secret_key().to_secret_hex(),
@@ -564,6 +571,9 @@ impl RemoteSigner {
         .map(|_| ())
     }
 
+    /// The persona the signer names. This is the signer's claim: nothing here
+    /// proves the signer holds that key. Check a signature by it (see
+    /// [`RemoteSigner::sign_event`]) before trusting it.
     pub async fn get_public_key(&self) -> Result<PublicKey, Error> {
         let hex = self.request("get_public_key", Vec::new()).await?;
         PublicKey::from_hex(hex.trim())
@@ -854,5 +864,166 @@ mod tests {
             .sign_with_keys(&persona)
             .unwrap();
         assert!(check_signed(&changed, &asked, &persona.public_key()).is_err());
+    }
+
+    // Round trips over the in-memory relay, with a small fake signer task.
+
+    const URLS: [&str; 1] = ["wss://relay.one"];
+    const WAIT: Duration = Duration::from_secs(2);
+
+    fn urls() -> Vec<String> {
+        URLS.iter().map(|u| u.to_string()).collect()
+    }
+
+    /// A fake signer on `net`: for each request it can decrypt, `respond`
+    /// gets the request id and the client key and returns the events to publish.
+    fn spawn_signer<F>(net: &FakeNetwork, signer: &Keys, respond: F)
+    where
+        F: Fn(&str, &PublicKey) -> Vec<Event> + Send + 'static,
+    {
+        let relay = net.connect(&urls());
+        let mut sub = relay.subscribe(vec![
+            Filter::new()
+                .kind(Kind::NostrConnect)
+                .pubkey(signer.public_key()),
+        ]);
+        let signer = signer.clone();
+        tokio::spawn(async move {
+            while let Some(msg) = sub.recv().await {
+                let RelayMsg::Event(ev) = msg else { continue };
+                let Ok(plain) = nip44::decrypt(signer.secret_key(), &ev.pubkey, &ev.content)
+                else {
+                    continue;
+                };
+                let Ok(req) = serde_json::from_str::<serde_json::Value>(&plain) else {
+                    continue;
+                };
+                let id = req["id"].as_str().unwrap_or("").to_string();
+                for reply in respond(&id, &ev.pubkey) {
+                    relay.publish(&reply);
+                }
+            }
+        });
+    }
+
+    /// A reply event from `author` to `client`, with the given `p` tags.
+    fn reply_with_tags(author: &Keys, client: &PublicKey, tags: &[&PublicKey], body: &str) -> Event {
+        let ct = nip44::encrypt(author.secret_key(), client, body, nip44::Version::V2).unwrap();
+        let mut b = EventBuilder::new(Kind::NostrConnect, ct);
+        for t in tags {
+            b = b.tag(Tag::public_key(**t));
+        }
+        b.sign_with_keys(author).unwrap()
+    }
+
+    fn paired(net: &FakeNetwork, signer: &Keys) -> RemoteSigner {
+        let bunker = BunkerUri {
+            remote: signer.public_key(),
+            relays: urls(),
+            secret: None,
+        };
+        RemoteSigner::from_bunker(&bunker, net.connect(&urls()), WAIT)
+    }
+
+    #[tokio::test]
+    async fn request_gets_the_signers_reply() {
+        let net = FakeNetwork::new();
+        let signer = Keys::generate();
+        let s = signer.clone();
+        spawn_signer(&net, &signer, move |id, client| {
+            vec![reply_with_tags(&s, client, &[client], &json!({"id": id, "result": "pong"}).to_string())]
+        });
+        assert_eq!(paired(&net, &signer).request("ping", vec![]).await, Ok("pong".into()));
+    }
+
+    #[tokio::test]
+    async fn request_ignores_a_reply_from_another_author() {
+        let net = FakeNetwork::new();
+        let signer = Keys::generate();
+        let intruder = Keys::generate();
+        let s = signer.clone();
+        spawn_signer(&net, &signer, move |id, client| {
+            let body = |r: &str| json!({"id": id, "result": r}).to_string();
+            vec![
+                reply_with_tags(&intruder, client, &[client], &body("evil")),
+                reply_with_tags(&s, client, &[client], &body("good")),
+            ]
+        });
+        assert_eq!(paired(&net, &signer).request("m", vec![]).await, Ok("good".into()));
+    }
+
+    #[tokio::test]
+    async fn request_ignores_a_reply_with_two_p_tags() {
+        let net = FakeNetwork::new();
+        let signer = Keys::generate();
+        let extra = Keys::generate().public_key();
+        let s = signer.clone();
+        spawn_signer(&net, &signer, move |id, client| {
+            let body = |r: &str| json!({"id": id, "result": r}).to_string();
+            vec![
+                reply_with_tags(&s, client, &[client, &extra], &body("evil")),
+                reply_with_tags(&s, client, &[client], &body("good")),
+            ]
+        });
+        assert_eq!(paired(&net, &signer).request("m", vec![]).await, Ok("good".into()));
+    }
+
+    #[tokio::test]
+    async fn request_ignores_a_reply_with_another_id() {
+        let net = FakeNetwork::new();
+        let signer = Keys::generate();
+        let s = signer.clone();
+        spawn_signer(&net, &signer, move |id, client| {
+            vec![
+                reply_with_tags(&s, client, &[client], r#"{"id":"other","result":"evil"}"#),
+                reply_with_tags(&s, client, &[client], &json!({"id": id, "result": "good"}).to_string()),
+            ]
+        });
+        assert_eq!(paired(&net, &signer).request("m", vec![]).await, Ok("good".into()));
+    }
+
+    #[tokio::test]
+    async fn request_ignores_an_auth_url_reply() {
+        let net = FakeNetwork::new();
+        let signer = Keys::generate();
+        let s = signer.clone();
+        spawn_signer(&net, &signer, move |id, client| {
+            vec![
+                reply_with_tags(&s, client, &[client], &json!({"id": id, "result": "auth_url", "error": "https://auth.example"}).to_string()),
+                reply_with_tags(&s, client, &[client], &json!({"id": id, "result": "good"}).to_string()),
+            ]
+        });
+        assert_eq!(paired(&net, &signer).request("m", vec![]).await, Ok("good".into()));
+    }
+
+    #[tokio::test]
+    async fn request_fails_on_a_non_empty_error() {
+        let net = FakeNetwork::new();
+        let signer = Keys::generate();
+        let s = signer.clone();
+        spawn_signer(&net, &signer, move |id, client| {
+            vec![reply_with_tags(&s, client, &[client], &json!({"id": id, "error": "denied"}).to_string())]
+        });
+        assert_eq!(
+            paired(&net, &signer).request("m", vec![]).await,
+            Err(Error::Signer("denied".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn await_signer_ignores_ack_and_accepts_the_echo() {
+        let net = FakeNetwork::new();
+        let signer = Keys::generate();
+        let impostor = Keys::generate();
+        let (_uri, pending) = PendingPair::start(net.connect(&urls()), "x", "").unwrap();
+        let client = pending.app_keys.public_key();
+        let secret = pending.secret.clone();
+        let relay = net.connect(&urls());
+        // The impostor's bare ack comes first; only the signer's echo counts.
+        relay.publish(&reply_with_tags(&impostor, &client, &[&client], r#"{"id":"c0","result":"ack"}"#));
+        relay.publish(&reply_with_tags(&signer, &client, &[&client], r#"{"id":"c0","result":"ack"}"#));
+        relay.publish(&reply_with_tags(&signer, &client, &[&client], &json!({"id": "c0", "result": secret}).to_string()));
+        let paired = pending.await_signer(WAIT, || {}).await.unwrap();
+        assert_eq!(paired.remote(), signer.public_key());
     }
 }

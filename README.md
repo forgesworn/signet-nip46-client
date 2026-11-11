@@ -32,7 +32,8 @@ signer. See "Coming from 0.1" below.
 `connect_with_secret`, `get_public_key`, `sign_event`) are `async` and use
 `tokio::time`, so they must run on a tokio runtime with the time driver enabled.
 `parse_bunker_uri`, `PendingPair::start`, `from_bunker`, `restore` and `persist`
-are plain functions. `fray-relay-client` has one: `Task::spawn` runs a
+are plain functions. `fray-relay-client` provides one
+(`fray_relay_client::runtime()`), and `fray_relay_client::Task::spawn` runs a
 future on it. The `Relay` you pass in is the caller's. This crate opens no
 connection of its own.
 
@@ -96,7 +97,8 @@ A `BunkerUri` prints its secret as `<redacted>`.
    ephemeral and one sent before anyone listens is lost.
 3. The signer sends a `connect` reply. `await_signer` returns a `RemoteSigner`
    whose signer key is the sender of the accepted reply. It consumes the
-   `PendingPair`, so one pairing accepts one answer.
+   `PendingPair`, so one pairing accepts one answer. Its requests use the same
+   `timeout` until `set_timeout` changes it.
 4. `get_public_key()` returns the persona.
 
 **The secret-echo rule.** A reply ends the wait with success only if its
@@ -133,25 +135,40 @@ timeout)` rebuilds a signer without sending anything; a bad `app_secret_key` is
 `Error::Key` and a bad `remote_signer` is `Error::Uri`. `connect()` sends a
 `connect` with an empty secret, for a signer that already knows the client.
 
-`persist` stores the `persona` it is given and does not check it.
+`persist` stores the `persona` it is given and checks neither it nor the
+pairing: it sends nothing, so it also works on a `bunker://` signer before
+`connect_with_secret` has succeeded. Persist only after the pairing and
+`get_public_key` have succeeded, with the persona that call returned.
 
 ## Coming from 0.1
 
 0.1 wrapped rust-nostr's `NostrConnect`. This version has no `NostrSigner`
-implementation and no async wrapper. An app that wants one writes a thin adapter
-over `get_public_key`, `sign_event` and `request`.
+implementation. An app that wants one writes a thin adapter over
+`get_public_key`, `sign_event` and `request`.
 
 | 0.1 | Now |
 |---|---|
-| `BunkerSession::pair` | `parse_bunker_uri`, `RemoteSigner::from_bunker`, then `connect_with_secret` |
-| `pair_nostrconnect` | `PendingPair::start`, then `await_signer` |
-| `restore` | `RemoteSigner::restore(&session, relay, timeout)` |
-| `persist` | `RemoteSigner::persist(&persona)` |
+| `BunkerSession::pair` with a `bunker://` URI | `parse_bunker_uri`, `RemoteSigner::from_bunker`, then `connect_with_secret` |
+| `BunkerSession::pair` with a `nostrconnect://` URI, or `pair_nostrconnect` | `PendingPair::start`, then `await_signer` |
+| `SessionOptions { timeout }` | a `timeout` argument to `await_signer`, `restore` and `from_bunker`, and `RemoteSigner::set_timeout` |
+| `PersistedSession { app_secret_key, bunker_uri }` | `PersistedSession { app_secret_key, remote_signer, relays, persona }`; `bunker_uri()` is now a method |
+| `restore(persisted, opts)` | `RemoteSigner::restore(&session, relay, timeout)`, from a 0.2 `PersistedSession` (see below) |
+| `persist().await`, which failed before a `nostrconnect://` handshake | `RemoteSigner::persist(&persona)`, plain and infallible (see "The persisted session") |
 | `user_public_key` | `RemoteSigner::get_public_key().await`, a round trip each time |
 | `shutdown` | none: the crate owns no connection. Drop the `RemoteSigner`; the `Relay` is the caller's to keep or drop |
 | `impl NostrSigner` | none; use `sign_event`, `request` and `get_public_key` |
+| `Error`: `Uri`, `Key`, `Connect`, `Signer` | the same, plus `Timeout` |
 
 Besides the new transport, you now pass in the `Relay` and the timeouts.
+
+**A stored 0.1 session does not load as it is.** It has `bunker_uri` where
+0.2 has `remote_signer`, `relays` and `persona`, so reading it as the 0.2 type
+fails. To keep a 0.1 user paired, read the old JSON, take `remote` and
+`relays` from `parse_bunker_uri(bunker_uri)`, keep `app_secret_key`, and build
+a 0.2 `PersistedSession`. `restore` does not read `persona`, so restore it,
+call `connect()`, set `persona` from `get_public_key()`, and `persist` again.
+`parse_bunker_uri` keeps only `wss://` relays, so a 0.1 session whose relays
+are all `ws://` needs a fresh pairing.
 
 ## One copy of `fray-relay-client`
 
@@ -159,6 +176,8 @@ Besides the new transport, you now pass in the `Relay` and the timeouts.
 take an `Arc<dyn Relay>` from `fray-relay-client`. Your build must hold one copy
 of that crate, at the revision this crate pins, or the `Relay` you build and the
 `Relay` this crate expects are different types.
+The same holds for `nostr`: this crate's API uses `nostr` types
+(`PublicKey`, `Event`, `UnsignedEvent`) and pins `nostr = "=0.44.8"`.
 
 ```toml
 fray-relay-client = { git = "https://github.com/forgesworn/fray-relay-client", rev = "7b2243046a01814ad4ad8797ce563425dbcd9011" }
@@ -166,9 +185,11 @@ fray-relay-client = { git = "https://github.com/forgesworn/fray-relay-client", r
 
 ## Known open
 
-The `nostrconnect://` flow's `get_public_key` step has not been proven against
-every signer. This crate's own tests do not run a pairing or request round trip
-against a fake signer.
+`get_public_key` returns the persona the signer names. Nothing in this crate
+proves that the signer holds that persona's key: in the `nostrconnect://`
+flow, whoever echoes the URI's secret can name any persona. Before acting on
+the persona, have it sign something and check the result (`sign_event` does
+that check). The `nostrconnect://` flow has been tried against one signer only.
 
 ## Tests
 
@@ -178,7 +199,11 @@ cargo test
 
 The unit tests build signers over `fray-relay-client`'s in-memory relay and need
 no network. They cover the URIs, the reply check, the persisted session and the
-signature check. They do not run a full pairing or request round trip.
+signature check. Round-trip tests run `request` against a small fake signer on
+that relay: it ignores a reply from another author, one with two `p` tags, one
+with another id and an `auth_url` reply, and it fails on a non-empty `error`.
+A further test shows `await_signer` ignoring an `ack` and accepting the echo of
+the secret.
 `tests/no_game_names.rs` fails if a game or app name appears in library code.
 
 ## Licence

@@ -20,10 +20,11 @@ tests were kept. The rust-nostr `NostrConnect` transport was replaced by a
 request loop on signet-play's relay trait (now the `Relay` trait of
 `fray-relay-client`), and `perms` was added to the `nostrconnect://` URI.
 
-That vendored client was a mirror of forgesworn/signet-nip46-client 0.1
-(canonical commit 5b85902f4655e541d4c631da5bc3257868dcc96a, plus the earlier
-codebase's nostrconnect-secret divergence). This crate replaces that one under
-the same name; it shares no history with it.
+That vendored client was a mirror of signet-nip46-client 0.1, which is kept in
+forgesworn/signet-nip46-client-legacy (private) (canonical commit
+5b85902f4655e541d4c631da5bc3257868dcc96a, plus the earlier codebase's
+nostrconnect-secret divergence). This crate replaces that one under the same
+name; it shares no history with it.
 
 The earlier game codebase is distributed under the MIT License:
 
