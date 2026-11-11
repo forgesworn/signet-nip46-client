@@ -925,6 +925,22 @@ mod tests {
         RemoteSigner::from_bunker(&bunker, net.connect(&urls()), WAIT)
     }
 
+    /// Models a relay that ignores the author and `#p` parts of a filter, as a
+    /// hostile relay may: only the client's own checks stand in the way.
+    struct Unfiltered(Arc<dyn Relay>);
+
+    impl Relay for Unfiltered {
+        fn publish(&self, ev: &Event) {
+            self.0.publish(ev)
+        }
+        fn subscribe(&self, _: Vec<Filter>) -> Subscription {
+            self.0.subscribe(vec![Filter::new().kind(Kind::NostrConnect)])
+        }
+        fn urls(&self) -> Vec<String> {
+            self.0.urls()
+        }
+    }
+
     #[tokio::test]
     async fn request_gets_the_signers_reply() {
         let net = FakeNetwork::new();
@@ -949,7 +965,15 @@ mod tests {
                 reply_with_tags(&s, client, &[client], &body("good")),
             ]
         });
-        assert_eq!(paired(&net, &signer).request("m", vec![]).await, Ok("good".into()));
+        // Over a relay that applies the filter, the intruder's reply never arrives;
+        // this one delivers it, so the client's own author check must drop it.
+        let bunker = BunkerUri {
+            remote: signer.public_key(),
+            relays: urls(),
+            secret: None,
+        };
+        let client = RemoteSigner::from_bunker(&bunker, Arc::new(Unfiltered(net.connect(&urls()))), WAIT);
+        assert_eq!(client.request("m", vec![]).await, Ok("good".into()));
     }
 
     #[tokio::test]
