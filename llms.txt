@@ -1,0 +1,14 @@
+# signet-nip46-client
+
+> Rust NIP-46 remote-signer client with bunker and Nostr Connect pairing, persisted sessions and checked signing requests.
+
+## Documentation
+
+- [Rust integration](https://github.com/forgesworn/signet-nip46-client/blob/main/README.md): Pairing flows, requirements for the calling application and the session contract.
+
+## ForgeSworn ecosystem
+
+- [ForgeSworn library guide](https://forgesworn.dev/llms.txt): Find related libraries, tools and integration guides by task and runtime.
+- [ForgeSworn on GitHub](https://github.com/forgesworn): Browse the organisation’s public repositories.
+- [Project source](https://github.com/forgesworn/signet-nip46-client): Canonical source repository, documentation and release information.
+- [fray-relay-client](https://github.com/forgesworn/fray-relay-client): Underlying Nostr relay client in Rust.
